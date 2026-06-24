@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/trip.dart';
 import '../models/station_mark.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class MapViewScreen extends StatefulWidget {
   final Trip trip;
@@ -18,9 +19,8 @@ class _MapViewScreenState extends State<MapViewScreen> {
   LatLng? _userLocation; // Локация пользователя
   bool _isLocating = false;
 
-  // Метод ручного определения геопозиции
   Future<void> _checkLocation() async {
-    if (_userLocation != null){
+    if (_userLocation != null) {
       setState(() {
         _userLocation = null;
       });
@@ -28,154 +28,167 @@ class _MapViewScreenState extends State<MapViewScreen> {
     }
     setState(() => _isLocating = true);
     try {
-      // Проверяем, включена ли геолокация на телефоне
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw 'Геолокация выключена на устройстве. Включите её в настройках.';
-      }
+      if (!serviceEnabled) throw 'Геолокация выключена на устройстве.';
 
-      // Проверяем права приложения
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw 'Доступ к геолокации отклонен.';
-        }
+        if (permission == LocationPermission.denied) throw 'В разрешении отказано.';
       }
+      if (permission == LocationPermission.deniedForever) throw 'Разрешения заблокированы.';
 
-      if (permission == LocationPermission.deniedForever) {
-        throw 'Доступ к геолокации отклонен навсегда в настройках телефона.';
-      }
-
-      // Получаем текущие координаты (таймаут 15 сек, чтобы не зависало в глуши)
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 15),
+        desiredAccuracy: LocationAccuracy.high
       );
-
       setState(() {
         _userLocation = LatLng(position.latitude, position.longitude);
         _isLocating = false;
       });
 
-      // Перемещаем камеру карты на пользователя
-      _mapController.move(_userLocation!, 9.0);
-
+      _mapController.move(_userLocation!, _mapController.camera.zoom);
     } catch (e) {
       setState(() => _isLocating = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('GPS: $e')));
       }
     }
   }
 
-  // Алгоритм построения линий (Пункт 6 вашего ТЗ)
-  List<Polyline> _buildPolylines(List<StationMark> stations) {
-    if (stations.length < 2) return [];
+  // Вспомогательный метод определения: прошла станция или нет
+  bool _isStationPassed(StationMark station, DateTime nowMsk) {
+    final departureTime = station.arrivalTimeMsk.add(station.stopDuration);
+    return departureTime.isBefore(nowMsk);
+  }
 
-    List<LatLng> points = [];
-    
-    // Если геолокация не определена, просто соединяем все точки по порядку
-    if (_userLocation == null) {
-      for (var s in stations) {
-        points.add(LatLng(s.latitude!, s.longitude!));
+  // Динамическое построение цветных отрезков пути
+  List<Polyline> _buildColoredPolylines(List<StationMark> validStations) {
+    List<Polyline> polylines = [];
+    if (validStations.length < 2) return polylines;
+
+    final nowMsk = DateTime.now(); // Текущее время (предполагаем МСК на устройстве или в логике)
+
+    for (int i = 0; i < validStations.length - 1; i++) {
+      final s1 = validStations[i];
+      final s2 = validStations[i + 1];
+
+      final p1 = LatLng(s1.latitude!, s1.longitude!);
+      final p2 = LatLng(s2.latitude!, s2.longitude!);
+
+      final s1Passed = _isStationPassed(s1, nowMsk);
+      final s2Passed = _isStationPassed(s2, nowMsk);
+
+      // Если включен режим геолокации И мы находимся на перегоне между Прошедшей и Будущей станцией
+      if (_userLocation != null && s1Passed && !s2Passed) {
+        // Отрезок 1: От прошедшей станции до человека (Зеленый)
+        polylines.add(Polyline(
+          points: [p1, _userLocation!],
+          color: Colors.green,
+          strokeWidth: 4.5,
+        ));
+        // Отрезок 2: От человека до будущей станции (Синий)
+        polylines.add(Polyline(
+          points: [_userLocation!, p2],
+          color: Colors.blue,
+          strokeWidth: 4.5,
+        ));
+      } else {
+        // Стандартная логика времени без GPS или для остальных перегонов
+        Color segmentColor;
+        if (s1Passed && s2Passed) {
+          segmentColor = Colors.green; // Путь от двух прошедших
+        } else if (!s1Passed && !s2Passed) {
+          segmentColor = Colors.red; // Путь от двух будущих
+        } else {
+          segmentColor = Colors.blue; // Путь от прошедшей к будущей
+        }
+
+        polylines.add(Polyline(
+          points: [p1, p2],
+          color: segmentColor,
+          strokeWidth: 4.5,
+        ));
       }
-      return [
-        Polyline(points: points, strokeWidth: 4.0, color: Colors.blue),
-      ];
     }
-
-    // Логика внедрения человека МЕЖДУ станциями
-    // Ищем, между какими двумя станциями по времени сейчас находится поезд
-    int insertIndex = -1;
-    final now = DateTime.now();
-
-    for (int i = 0; i < stations.length - 1; i++) {
-      final currentStation = stations[i];
-      final nextStation = stations[i + 1];
-
-      // Если мы уже уехали со станции А, но еще не доехали до станции Б
-      if (now.isAfter(currentStation.departureTimeLocal) && now.isBefore(nextStation.arrivalTimeLocal)) {
-        insertIndex = i + 1; // Человек должен быть вставлен ПОСЛЕ текущей станции
-        break;
-      }
-    }
-
-    // Строим итоговый массив точек
-    for (int i = 0; i < stations.length; i++) {
-      // Если мы дошли до индекса, где между станциями находится человек, сначала добавляем человека
-      if (i == insertIndex) {
-        points.add(_userLocation!);
-      }
-      points.add(LatLng(stations[i].latitude!, stations[i].longitude!));
-    }
-
-    // Случай, если поезд уже проехал ВСЕ станции, а конечная осталась позади (человек в самом конце)
-    if (insertIndex == -1 && now.isAfter(stations.last.departureTimeLocal)) {
-      points.add(_userLocation!);
-    }
-    // Случай, если путешествие еще не началось (человек перед первой станцией)
-    if (insertIndex == -1 && now.isBefore(stations.first.arrivalTimeLocal)) {
-      points.insert(0, _userLocation!);
-    }
-
-    return [
-      Polyline(points: points, strokeWidth: 4.0, color: Colors.deepPurple, isDotted: false),
-    ];
+    return polylines;
   }
 
   @override
   Widget build(BuildContext context) {
-    // Фильтруем только те станции, у которых заданы координаты
-    final validStations = widget.trip.stations.where((s) => s.hasCoordinates).toList()
-      ..sort((a, b) => a.arrivalTimeMsk.compareTo(b.arrivalTimeMsk));
+    // Отбираем только станции с координатами
+    final validStations = widget.trip.stations.where((s) => s.hasCoordinates).toList();
+    final nowMsk = DateTime.now();
 
-    // Вычисляем начальный центр карты (берём первую станцию или дефолт)
-    final LatLng initialCenter = validStations.isNotEmpty
-        ? LatLng(validStations.first.latitude!, validStations.first.longitude!)
-        : const LatLng(54.939620, 73.385945); // Омск по дефолту
+    // Центрируем карту
+    LatLng initialCenter = const LatLng(55.0, 73.0); // Дефолт (Омск)
+    if (_userLocation != null) {
+      initialCenter = _userLocation!;
+    } else if (validStations.isNotEmpty) {
+      initialCenter = LatLng(validStations.first.latitude!, validStations.first.longitude!);
+    }
 
-    // Собираем маркеры станций
-    List<Marker> markers = validStations.map((station) {
+    // Сборка маркеров станций
+    final markers = validStations.map((station) {
+      final passed = _isStationPassed(station, nowMsk);
       return Marker(
         point: LatLng(station.latitude!, station.longitude!),
-        width: 40,
-        height: 40,
+        width: 120,
+        height: 60,
         child: GestureDetector(
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('${station.name}\n${station.getTimeLeftLabel()}')),
-            );
-          },
-          child: Text(station.statusEmoji, style: const TextStyle(fontSize: 24)),
+          onTap: () => _showStationInfo(context, station),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.location_on,
+                // Прошедшие — зеленые, будущие — красные
+                color: passed ? Colors.green : Colors.red,
+                size: 34,
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: passed ? Colors.green : Colors.red, width: 1),
+                ),
+                child: Text(
+                  station.name,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }).toList();
 
-    // Если местоположение пользователя определено, добавляем его синий маркер
+    // Добавляем маркер пользователя, если GPS включен
     if (_userLocation != null) {
       markers.add(
         Marker(
           point: _userLocation!,
-          width: 50,
-          height: 50,
-          child: const Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(Icons.circle, color: Colors.white, size: 22),
-              Icon(Icons.my_location, color: Colors.blue, size: 20),
-            ],
+          width: 40,
+          height: 40,
+          child: const Icon(
+            Icons.navigation,
+            color: Colors.blueAccent,
+            size: 32,
           ),
         ),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text('Карта: ${widget.trip.title}')),
-      body: validStations.isEmpty
-          ? const Center(child: Text('У станций этой поездки нет координат.\nЗадайте их в режиме редактирования групп.', textAlign: TextAlign.center))
+      appBar: AppBar(
+        title: Text('Карта: ${widget.trip.title}'),
+      ),
+      body: validStations.isEmpty && _userLocation == null
+          ? const Center(child: Padding(
+              padding: EdgeInsets.all(24.0),
+              child: Text('Нет станций с координатами.\nЗадайте их в режиме редактирования группы.', textAlign: TextAlign.center),
+            ))
           : FlutterMap(
               mapController: _mapController,
               options: MapOptions(
@@ -184,27 +197,84 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 maxZoom: 18.0,
               ),
               children: [
-                // Слой карты (OpenStreetMap) с автоматическим дисковым кэшированием самого флаттера
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.train_project',
                 ),
-                // Слой линий пути
+                // Рисуем наши разноцветные перегоны путей
                 PolylineLayer(
-                  polylines: _buildPolylines(validStations),
+                  polylines: _buildColoredPolylines(validStations),
                 ),
-                // Слой точек (вокзалы и я)
                 MarkerLayer(markers: markers),
               ],
             ),
-      // Кнопка ручного обновления геопозиции в углу
       floatingActionButton: FloatingActionButton(
         onPressed: _isLocating ? null : _checkLocation,
         backgroundColor: _userLocation != null ? Colors.redAccent : Colors.blue,
         foregroundColor: Colors.white,
         child: _isLocating 
             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : Icon(_userLocation != null ? Icons.gps_off : Icons.gps_fixed), // Меняем иконку при включенном GPS
+            : Icon(_userLocation != null ? Icons.gps_off : Icons.gps_fixed),
+      ),
+    );
+  }
+
+  // Метод открытия внешнего приложения карт по координатам
+  Future<void> _openExternalMap(double lat, double lng) async {
+    final Uri geoUri = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+    if (await canLaunchUrl(geoUri)) {
+      await launchUrl(geoUri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть внешние карты')),
+        );
+      }
+    }
+  }
+
+  void _showStationInfo(BuildContext context, StationMark station) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                station.name, 
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Прибытие (МСК): ${station.arrivalTimeMsk.day.toString().padLeft(2,'0')}.${station.arrivalTimeMsk.month.toString().padLeft(2,'0')} в ${station.arrivalTimeMsk.hour.toString().padLeft(2,'0')}:${station.arrivalTimeMsk.minute.toString().padLeft(2,'0')}'
+              ),
+              Text('Время стоянки: ${station.stopDuration.inMinutes} мин.'),
+              const SizedBox(height: 4),
+              if (station.latitude != null && station.longitude != null)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Координаты: ${station.latitude!.toStringAsFixed(5)}, ${station.longitude!.toStringAsFixed(5)}', 
+                        style: const TextStyle(color: Colors.grey, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    // Кнопка в виде карты для открытия внешнего приложения
+                    IconButton(
+                      icon: const Icon(Icons.map, color: Colors.blue),
+                      tooltip: 'Открыть в картах телефона',
+                      onPressed: () => _openExternalMap(station.latitude!, station.longitude!),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

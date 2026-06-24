@@ -13,18 +13,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
 
   // Список экранов для переключения
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const MapTripsListScreen(), // Экран, где выбираем поездку для просмотра на карте
-  ];
+  Widget _buildBody(){
+    switch (_currentIndex) {
+      case 0:
+        return const HomeScreen();
+      case 1:
+        return const MapTripsListScreen();
+      default:
+        return const HomeScreen();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: _buildBody(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {

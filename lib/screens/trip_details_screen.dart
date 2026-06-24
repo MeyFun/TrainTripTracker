@@ -364,7 +364,7 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
                                 children: [
                                   if (station.hasCoordinates && !_isEditingMode)
                                     IconButton(
-                                      icon: const Icon(Icons.map, color: Colors.blue),
+                                      icon: const Icon(Icons.star, color: Colors.amber),
                                       onPressed: () => _openMap(station.latitude!, station.longitude!),
                                     ),
                                   if (_isEditingMode) ...[
