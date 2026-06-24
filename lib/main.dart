@@ -14,7 +14,7 @@ void main() {
   ]).then((_) {
     runApp(const TrainTrackerApp());
   });
-}
+} 
 
 class TrainTrackerApp extends StatelessWidget {
   const TrainTrackerApp({super.key});
