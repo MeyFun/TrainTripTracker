@@ -206,6 +206,7 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
                       IconButton(
                         icon: const Icon(Icons.calendar_month),
                         onPressed: () async {
+
                           final date = await showDatePicker(
                             context: context,
                             initialDate: selectedMskDateTime,
@@ -213,6 +214,7 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
                             lastDate: DateTime.now().add(const Duration(days: 30)),
                           );
                           if (date == null) return;
+                          if (!context.mounted) return;
 
                           final time = await showTimePicker(
                             context: context,
@@ -223,6 +225,8 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
                             ),
                           );
                           if (time == null) return;
+
+                          if (!context.mounted) return;
 
                           setDialogState(() {
                             selectedMskDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);

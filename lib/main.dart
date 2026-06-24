@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Импортируем для фиксации ориентации
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_navigation_screen.dart';
 
 void main() {
   // Гарантируем инициализацию связок Flutter перед настройкой системных параметров
@@ -40,7 +40,7 @@ class TrainTrackerApp extends StatelessWidget {
       ],
       locale: const Locale('ru', 'RU'), // Принудительно устанавливаем русский интерфейс
       // -----------------------------
-      home: const HomeScreen(),
+      home: const MainNavigationScreen(),
     );
   }
 }
