@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Импортируем для фиксации ориентации
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'screens/main_navigation_screen.dart';
+import 'helpers/map_cache_helper.dart';
 
-void main() {
+void main() async {
   // Гарантируем инициализацию связок Flutter перед настройкой системных параметров
   WidgetsFlutterBinding.ensureInitialized();
+
+  await MapCacheHelper.init();
   
   // Разрешаем только портретную (вертикальную) ориентацию
   SystemChrome.setPreferredOrientations([

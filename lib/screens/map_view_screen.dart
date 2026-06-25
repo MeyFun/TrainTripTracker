@@ -5,6 +5,8 @@ import 'package:geolocator/geolocator.dart';
 import '../models/trip.dart';
 import '../models/station_mark.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../helpers/map_cache_helper.dart';
+import 'package:flutter_map_cache/flutter_map_cache.dart';
 
 class MapViewScreen extends StatefulWidget {
   final Trip trip;
@@ -148,7 +150,7 @@ class _MapViewScreenState extends State<MapViewScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.85),
+                  color: Colors.white.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: passed ? Colors.green : Colors.red, width: 1),
                 ),
@@ -200,6 +202,9 @@ class _MapViewScreenState extends State<MapViewScreen> {
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.train_project',
+                  tileProvider: CachedTileProvider(
+                    store: MapCacheHelper.cacheOptions.store!,
+                  ),
                 ),
                 // Рисуем наши разноцветные перегоны путей
                 PolylineLayer(
